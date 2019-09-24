@@ -49,16 +49,16 @@ _TRAIN_DATA_SOURCES = [
         "input": "news-commentary-v12.de-en.en",
         "target": "news-commentary-v12.de-en.de",
     },
-    {
-        "url": "http://www.statmt.org/wmt13/training-parallel-commoncrawl.tgz",
-        "input": "commoncrawl.de-en.en",
-        "target": "commoncrawl.de-en.de",
-    },
-    {
-        "url": "http://www.statmt.org/wmt13/training-parallel-europarl-v7.tgz",
-        "input": "europarl-v7.de-en.en",
-        "target": "europarl-v7.de-en.de",
-    },
+    # {
+    #     "url": "http://www.statmt.org/wmt13/training-parallel-commoncrawl.tgz",
+    #     "input": "commoncrawl.de-en.en",
+    #     "target": "commoncrawl.de-en.de",
+    # },
+    # {
+    #     "url": "http://www.statmt.org/wmt13/training-parallel-europarl-v7.tgz",
+    #     "input": "europarl-v7.de-en.en",
+    #     "target": "europarl-v7.de-en.de",
+    # },
 ]
 # Use pre-defined minimum count to generate subtoken vocabulary.
 _TRAIN_DATA_MIN_COUNT = 6
