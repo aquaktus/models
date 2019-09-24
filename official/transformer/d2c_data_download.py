@@ -32,6 +32,9 @@ import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 # pylint: enable=g-bad-import-order
 
+import linecache
+import numpy as np
+
 from official.transformer.utils import tokenizer
 from official.utils.flags import core as flags_core
 
@@ -42,43 +45,41 @@ from official.utils.flags import core as flags_core
 # min_count is the minimum number of times a token must appear in the data
 # before it is added to the vocabulary. "Best min count" refers to the value
 # that generates a vocabulary set that is closest in size to _TARGET_VOCAB_SIZE.
-_TRAIN_DATA_SOURCES = [
+_DATA_SOURCES = [
     {
-        "url": "http://data.statmt.org/wmt17/translation-task/"
-               "training-parallel-nc-v12.tgz",
-        "input": "news-commentary-v12.de-en.en",
-        "target": "news-commentary-v12.de-en.de",
-    },
-    {
-        "url": "http://www.statmt.org/wmt13/training-parallel-commoncrawl.tgz",
-        "input": "commoncrawl.de-en.en",
-        "target": "commoncrawl.de-en.de",
-    },
-    {
-        "url": "http://www.statmt.org/wmt13/training-parallel-europarl-v7.tgz",
-        "input": "europarl-v7.de-en.en",
-        "target": "europarl-v7.de-en.de",
-    },
+        "input": "https://raw.githubusercontent.com/odashi/ase15-django-dataset/master/django/all.anno",
+        "target": "https://raw.githubusercontent.com/odashi/ase15-django-dataset/master/django/all.code",
+    }
 ]
+
+
+# _TRAIN_DATA_SOURCES = [
+#     {
+#         "url": "http://data.statmt.org/wmt17/translation-task/"
+#                "training-parallel-nc-v12.tgz",
+#         "input": "news-commentary-v12.de-en.en",
+#         "target": "news-commentary-v12.de-en.de",
+#     }
+# ]
 # Use pre-defined minimum count to generate subtoken vocabulary.
 _TRAIN_DATA_MIN_COUNT = 6
 
-_EVAL_DATA_SOURCES = [
-    {
-        "url": "http://data.statmt.org/wmt17/translation-task/dev.tgz",
-        "input": "newstest2013.en",
-        "target": "newstest2013.de",
-    }
-]
+# _EVAL_DATA_SOURCES = [
+#     {
+#         "url": "http://data.statmt.org/wmt17/translation-task/dev.tgz",
+#         "input": "newstest2013.en",
+#         "target": "newstest2013.de",
+#     }
+# ]
 
-_TEST_DATA_SOURCES = [
-    {
-        "url": ("https://storage.googleapis.com/tf-perf-public/"
-                "official_transformer/test_data/newstest2014.tgz"),
-        "input": "newstest2014.en",
-        "target": "newstest2014.de",
-    }
-]
+# _TEST_DATA_SOURCES = [
+#     {
+#         "url": ("https://storage.googleapis.com/tf-perf-public/"
+#                 "official_transformer/test_data/newstest2014.tgz"),
+#         "input": "newstest2014.en",
+#         "target": "newstest2014.de",
+#     }
+# ]
 
 # Vocabulary constants
 _TARGET_VOCAB_SIZE = 32768  # Number of subtokens in the vocabulary list.
@@ -86,9 +87,9 @@ _TARGET_THRESHOLD = 327  # Accept vocabulary if size is within this threshold
 VOCAB_FILE = "vocab.ende.%d" % _TARGET_VOCAB_SIZE
 
 # Strings to inclue in the generated files.
-_PREFIX = "wmt32k"
+_PREFIX = "django"
 _TRAIN_TAG = "train"
-_EVAL_TAG = "dev"  # Following WMT and Tensor2Tensor conventions, in which the
+_EVAL_TAG = "eval"  # Following WMT and Tensor2Tensor conventions, in which the
                    # evaluation datasets are tagged as "dev" for development.
 
 # Number of files to split train and evaluation data
@@ -112,6 +113,49 @@ def find_file(path, filename, max_depth=5):
 ###############################################################################
 # Download and extraction functions
 ###############################################################################
+
+
+def download_data_sources(raw_dir, data_source):
+  """Downloads the datasources to the temp directory specified"""
+  
+  src_fp = download_from_url(raw_dir, data_source["input"])
+  tgt_fp = download_from_url(raw_dir, data_source["target"])
+  return src_fp, tgt_fp
+
+def split_data_files(src_file, tgt_file, raw_dir, train_ratio=0.9):
+  """Split two input files into train and test accordign to a ratio"""
+
+  # we check if the files have the same number of lines
+  assert sum(1 for line in open(src_file)) == sum(1 for line in open(tgt_file))
+  num_samples = sum(1 for line in open(src_file))
+  train_cutoff = int(num_samples * train_ratio)
+  
+  line_nums = np.arange(num_samples)
+
+  train_lines = line_nums[:train_cutoff]
+  test_lines = line_nums[train_cutoff:]
+
+  src_train = save_lines_to_file(src_file, train_lines, "train.src.txt", raw_dir)
+  tgt_train = save_lines_to_file(tgt_file, train_lines, "train.tgt.txt", raw_dir)
+
+  src_eval = save_lines_to_file(src_file, test_lines, "eval.src.txt", raw_dir)
+  tgt_eval = save_lines_to_file(tgt_file, test_lines, "eval.tgt.txt", raw_dir)
+
+  return src_train, tgt_train, src_eval, tgt_eval
+
+def save_lines_to_file(inpt_file, lines, file_name, raw_dir):
+  """save lines from file to new file"""
+
+  linecache.clearcache()
+
+  out_fp = os.path.join(raw_dir, file_name)
+  with open(out_fp, "w") as out:
+    for l in lines:
+        line = linecache.getline(inpt_file, l)
+        out.write(line)
+  return out_fp
+
+
 def get_raw_files(raw_dir, data_source):
   """Return raw files from source. Downloads/extracts if needed.
 
@@ -269,7 +313,7 @@ def write_file(writer, filename):
 # Data preprocessing
 ###############################################################################
 def encode_and_save_files(
-    subtokenizer, data_dir, raw_files, tag, total_shards):
+    src_subtokenizer, tgt_subtokenizer, data_dir, raw_files, tag, total_shards):
   """Save data from files as encoded Examples in TFrecord format.
 
   Args:
@@ -304,8 +348,8 @@ def encode_and_save_files(
     if counter > 0 and counter % 100000 == 0:
       tf.logging.info("\tSaving case %d." % counter)
     example = dict_to_example(
-        {"inputs": subtokenizer.encode(input_line, add_eos=True),
-         "targets": subtokenizer.encode(target_line, add_eos=True)})
+        {"inputs": src_subtokenizer.encode(input_line, add_eos=True),
+         "targets": tgt_subtokenizer.encode(target_line, add_eos=True)})
     writers[shard].write(example.SerializeToString())
     shard = (shard + 1) % total_shards
   for writer in writers:
@@ -332,7 +376,7 @@ def shuffle_records(fname):
   tmp_fname = fname + ".unshuffled"
   tf.gfile.Rename(fname, tmp_fname)
 
-  reader = tf.compat.v1.io.tf_record_iterator(tmp_fname)
+  reader = tf.io.tf_record_iterator(tmp_fname)
   records = []
   for record in reader:
     records.append(record)
@@ -378,34 +422,54 @@ def main(unused_argv):
   make_dir(FLAGS.raw_dir)
   make_dir(FLAGS.data_dir)
 
-  # Download test_data
-  tf.logging.info("Step 1/5: Downloading test data")
-  train_files = get_raw_files(FLAGS.data_dir, _TEST_DATA_SOURCES)
+  # # Download test_data
+  # tf.logging.info("Step 1/5: Downloading test data")
+  # train_files = get_raw_files(FLAGS.data_dir, _TEST_DATA_SOURCES)
 
-  # Get paths of download/extracted training and evaluation files.
-  tf.logging.info("Step 2/5: Downloading data from source")
-  train_files = get_raw_files(FLAGS.raw_dir, _TRAIN_DATA_SOURCES)
-  eval_files = get_raw_files(FLAGS.raw_dir, _EVAL_DATA_SOURCES)
+  # # Get paths of download/extracted training and evaluation files.
+  # tf.logging.info("Step 2/5: Downloading data from source")
+  # train_files = get_raw_files(FLAGS.raw_dir, _TRAIN_DATA_SOURCES)
+  # eval_files = get_raw_files(FLAGS.raw_dir, _EVAL_DATA_SOURCES)
 
-  # Create subtokenizer based on the training files.
-  tf.logging.info("Step 3/5: Creating subtokenizer and building vocabulary")
-  train_files_flat = train_files["inputs"] + train_files["targets"]
-  vocab_file = os.path.join(FLAGS.data_dir, VOCAB_FILE)
-  subtokenizer = tokenizer.Subtokenizer.init_from_files(
-      vocab_file, train_files_flat, _TARGET_VOCAB_SIZE, _TARGET_THRESHOLD,
+  # # Create subtokenizer based on the training files.
+  # tf.logging.info("Step 3/5: Creating subtokenizer and building vocabulary")
+  # train_files_flat = train_files["inputs"] + train_files["targets"]
+  # vocab_file = os.path.join(FLAGS.data_dir, VOCAB_FILE)
+  # subtokenizer = tokenizer.Subtokenizer.init_from_files(
+  #     vocab_file, train_files_flat, _TARGET_VOCAB_SIZE, _TARGET_THRESHOLD,
+  #     min_count=None if FLAGS.search else _TRAIN_DATA_MIN_COUNT)
+
+  # tf.logging.info("Step 4/5: Compiling training and evaluation data")
+  # compiled_train_files = compile_files(FLAGS.raw_dir, train_files, _TRAIN_TAG)
+  # compiled_eval_files = compile_files(FLAGS.raw_dir, eval_files, _EVAL_TAG)
+
+  # this whole section can be skipped since it only brings together all the translation files into one big one
+
+  tf.logging.info("Step 1/4: Downloading data from source")
+  (src_file, tgt_file) = download_data_sources(FLAGS.raw_dir, _DATA_SOURCES[0])
+
+  tf.logging.info("Step 2/4: Splitting data into train and test")
+  src_train, tgt_train, src_eval, tgt_eval = split_data_files(src_file, tgt_file, FLAGS.raw_dir, train_ratio=0.9)
+
+  tf.logging.info("Step 3/4: Tokenizing inputs and targets")
+  src_vocab_file = os.path.join(FLAGS.data_dir, "src_vocab.txt")
+  src_subtokenizer = tokenizer.Subtokenizer.init_from_files(
+      src_vocab_file, [src_train], _TARGET_VOCAB_SIZE, _TARGET_THRESHOLD,
       min_count=None if FLAGS.search else _TRAIN_DATA_MIN_COUNT)
 
-  tf.logging.info("Step 4/5: Compiling training and evaluation data")
-  compiled_train_files = compile_files(FLAGS.raw_dir, train_files, _TRAIN_TAG)
-  compiled_eval_files = compile_files(FLAGS.raw_dir, eval_files, _EVAL_TAG)
+  tgt_vocab_file = os.path.join(FLAGS.data_dir, "tgt_vocab.txt")
+  tgt_subtokenizer = tokenizer.Subtokenizer.init_from_files(
+      tgt_vocab_file, [tgt_train], _TARGET_VOCAB_SIZE, _TARGET_THRESHOLD,
+      min_count=None if FLAGS.search else _TRAIN_DATA_MIN_COUNT)
+  
 
   # Tokenize and save data as Examples in the TFRecord format.
-  tf.logging.info("Step 5/5: Preprocessing and saving data")
+  tf.logging.info("Step 4/4: Preprocessing and saving data")
   train_tfrecord_files = encode_and_save_files(
-      subtokenizer, FLAGS.data_dir, compiled_train_files, _TRAIN_TAG,
+      src_subtokenizer, tgt_subtokenizer, FLAGS.data_dir, (src_train, tgt_train), _TRAIN_TAG,
       _TRAIN_SHARDS)
   encode_and_save_files(
-      subtokenizer, FLAGS.data_dir, compiled_eval_files, _EVAL_TAG,
+      src_subtokenizer, tgt_subtokenizer, FLAGS.data_dir, (src_eval, tgt_eval), _EVAL_TAG,
       _EVAL_SHARDS)
 
   for fname in train_tfrecord_files:
@@ -415,11 +479,11 @@ def main(unused_argv):
 def define_data_download_flags():
   """Add flags specifying data download arguments."""
   flags.DEFINE_string(
-      name="data_dir", short_name="dd", default="/tmp/translate_ende",
+      name="data_dir", short_name="dd", default="/tmp/translate_django",
       help=flags_core.help_wrap(
           "Directory for where the translate_ende_wmt32k dataset is saved."))
   flags.DEFINE_string(
-      name="raw_dir", short_name="rd", default="/tmp/translate_ende_raw",
+      name="raw_dir", short_name="rd", default="/tmp/translate_django_raw",
       help=flags_core.help_wrap(
           "Path where the raw data will be downloaded and extracted."))
   flags.DEFINE_bool(
