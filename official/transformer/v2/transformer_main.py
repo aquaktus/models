@@ -240,6 +240,14 @@ class TransformerTask(object):
           map_data_fn, num_parallel_calls=params["num_parallel_calls"])
     if params["use_ctl"]:
       train_ds_iterator = iter(train_ds)
+    
+    ############################
+
+    train_ds_temp_iterator = iter(train_ds)
+    sample = next(train_ds_temp_iterator)
+    print(sample)
+
+    ############################
 
     callbacks = self._create_callbacks(flags_obj.model_dir, 0, params)
 
